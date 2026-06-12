@@ -757,3 +757,274 @@ Test yourself before moving to Week 2:
 *Notes compiled: Week 1, System Design Fundamentals*  
 *Case study: Zomato food delivery architecture*  
 *Level: Beginner → Intermediate*
+
+
+
+# 🏗️ Week 2 — System Design: Scaling, Databases & Caching
+ 
+---
+ 
+## 🏗️ System Design — Day 8: Horizontal vs Vertical Scaling & Load Balancers
+ 
+> ### ✏️ Today's SD Goal
+> Understand *when* and *why* to scale horizontally vs vertically, and how load balancers distribute traffic.
+ 
+---
+ 
+### 📖 Concepts to Learn
+ 
+- [ ] **Vertical Scaling (Scale Up)** — Add more CPU/RAM to a single machine; simpler but has a hard ceiling
+- [ ] **Horizontal Scaling (Scale Out)** — Add more machines; no hard ceiling, but introduces complexity (state, coordination)
+- [ ] **Stateless vs Stateful servers** — Horizontal scaling *requires* stateless app servers (session state must live outside)
+- [ ] **Load Balancer role** — Distributes incoming requests across N servers; single entry point for clients
+- [ ] **Load Balancing algorithms** — Round Robin, Least Connections, IP Hash, Weighted Round Robin
+- [ ] **Health checks** — LB pings servers; removes unhealthy nodes from the pool automatically
+- [ ] **Layer 4 vs Layer 7 LB** — L4 routes on TCP/IP; L7 routes on HTTP (URL, headers, cookies)
+- [ ] **Single Point of Failure (SPOF)** — The LB itself must be redundant (Active-Passive or Active-Active pair)
+---
+ 
+### 📐 Mental Model
+ 
+```
+          ┌─────────────────┐
+Clients → │   Load Balancer  │ ← Health Checks
+          └────────┬────────┘
+         ┌─────────┼─────────┐
+         ▼         ▼         ▼
+      Server 1  Server 2  Server 3
+         │         │         │
+         └────┬────┘         │
+              ▼              │
+        Shared State    (Redis / DB)
+```
+ 
+**Key insight:** App servers are *cheap to clone*; shared state (DB, cache, sessions) is the *hard part*.
+ 
+---
+ 
+### ⚖️ Vertical vs Horizontal — Quick Decision Table
+ 
+| Factor              | Vertical (Scale Up)   | Horizontal (Scale Out)  |
+|---------------------|-----------------------|-------------------------|
+| Cost                | Exponential beyond ~96 cores | Linear with commodity hardware |
+| Downtime required   | Yes (resize instance) | No (add nodes live)     |
+| Complexity          | Low                   | High (need LB, stateless design) |
+| Failure tolerance   | None (single machine) | High (N-1 redundancy)   |
+| When to use         | Early stage, < 100K users | At scale, or >1 AZ needed |
+ 
+---
+ 
+### 📝 Practice Calculation
+ 
+```
+Instagram-scale example:
+- 1B DAU, 500M photo views/day
+- Read QPS: 500M ÷ 86,400 ≈ 5,800 QPS  → Need ~6 app servers (each handles ~1K QPS)
+- Peak Read QPS: 5,800 × 2.5 ≈ 14,500 QPS → Need ~15 app servers at peak
+ 
+Vertical limit: A 192-core server might serve 10K QPS max
+  → Still need multiple machines + LB beyond that
+  → Horizontal wins for sustained internet-scale traffic
+```
+ 
+- [ ] Draw the above architecture (clients → LB → app servers → DB) from memory
+- [ ] Name one real product that uses each LB algorithm (hint: IP Hash → sticky sessions for chat)
+---
+ 
+### 📚 Resources
+ 
+- [ ] Read: **System Design Primer — Load Balancing** (GitHub: donnemartin/system-design-primer)
+- [ ] Watch: **Gaurav Sen — Horizontal vs Vertical Scaling** (YouTube)
+- [ ] Read: **AWS ELB docs — ALB vs NLB** (Layer 7 vs Layer 4 real-world example)
+---
+ 
+### 📋 Create a reference note: `SD-Reference-Scaling-and-LB.md`
+ 
+---
+---
+ 
+## 🏗️ System Design — Day 9: Databases — SQL vs NoSQL, Replication & Sharding
+ 
+> ### ✏️ Today's SD Goal
+> Know *which database type to pick* for a given problem, and explain replication + sharding to an interviewer confidently.
+ 
+---
+ 
+### 📖 Framework to Memorize
+ 
+- [ ] **SQL (Relational)** — Tables, schemas, ACID transactions, JOINs; strong consistency
+- [ ] **NoSQL types** — Key-Value (Redis, DynamoDB), Document (MongoDB), Column (Cassandra), Graph (Neo4j)
+- [ ] **CAP Theorem** — A distributed DB can only guarantee 2 of 3: Consistency, Availability, Partition Tolerance
+- [ ] **ACID vs BASE** — SQL is ACID (strong guarantees); NoSQL tends toward BASE (eventually consistent)
+- [ ] **Read Replica** — Copy of DB that handles reads only; primary handles writes → reduces read load
+- [ ] **Replication lag** — Read replica may be milliseconds behind primary (stale reads possible)
+- [ ] **Sharding (Horizontal Partitioning)** — Split rows across multiple DBs by a *shard key* (e.g. user_id % N)
+- [ ] **Shard key choice** — Bad key = hotspot (e.g. timestamp); Good key = evenly distributed (e.g. hashed user_id)
+- [ ] **Consistent Hashing** — Minimises data re-distribution when adding/removing shards
+---
+ 
+### 📐 Mental Model — Replication + Sharding Together
+ 
+```
+                     ┌──────────────────────┐
+Writes  →            │   Primary DB (Shard A) │ ─── Replica A1 (read)
+(user_id 0-499K)     └──────────────────────┘ ─── Replica A2 (read)
+ 
+                     ┌──────────────────────┐
+Writes  →            │   Primary DB (Shard B) │ ─── Replica B1 (read)
+(user_id 500K-1M)    └──────────────────────┘ ─── Replica B2 (read)
+```
+ 
+**Rule of thumb:**
+- **Replication** → improves *read throughput* and *availability*
+- **Sharding** → improves *write throughput* and handles *data volume*
+---
+ 
+### 🗂️ When to Pick What
+ 
+| Scenario                              | Choose              | Reason                                      |
+|---------------------------------------|---------------------|---------------------------------------------|
+| User profiles, financial records      | PostgreSQL / MySQL  | ACID, relational queries, structured schema |
+| Session store, rate limiting          | Redis               | Sub-ms latency, TTL support, Key-Value      |
+| Social graph (who follows whom)       | Neo4j / DynamoDB    | Graph traversal or flexible schema          |
+| Logs, time-series events              | Cassandra           | Write-heavy, wide-column, linear scale      |
+| E-commerce product catalog            | MongoDB             | Flexible nested docs (variants, specs)      |
+| Chat messages (high write, simple key)| DynamoDB / Cassandra| Partition by conversation_id, no JOINs      |
+ 
+---
+ 
+### 📝 Practice Calculation
+ 
+```
+Twitter-like system, choosing DB strategy:
+- 300M tweets/day (write-heavy)
+- Each tweet: 300 bytes
+- Storage/day: 300M × 300B = ~90 GB/day
+ 
+Sharding decision:
+- Single MySQL max write throughput: ~5K writes/sec
+- Tweet writes/sec: 300M ÷ 86,400 ≈ 3,472 writes/sec
+  → Fits on 1 primary! But in 2 years at 2× growth → need sharding
+ 
+Shard key choice:
+- ❌ created_at (hotspot — all new tweets hit same shard)
+- ✅ hash(user_id) — evenly distributed across shards
+```
+ 
+- [ ] Re-derive the shard count needed for WhatsApp (20B messages/day, 5K writes/sec per primary)
+- [ ] Note: Does your choice of DB change if you need full-text search? (hint: → Elasticsearch layer)
+---
+ 
+### 📚 Resources
+ 
+- [ ] Read: **ByteByteGo — SQL vs NoSQL** blog post
+- [ ] Read: **Designing Data-Intensive Applications (Kleppmann)** — Chapter 5: Replication (key chapter)
+- [ ] Watch: **Gaurav Sen — Database Sharding** (YouTube)
+---
+ 
+### 📋 Create a reference note: `SD-Reference-Databases-Replication-Sharding.md`
+ 
+---
+---
+ 
+## 🏗️ System Design — Day 10: Caching — Strategies, Redis & CDN
+ 
+> ### ✏️ Today's SD Goal
+> Explain the 4 cache write strategies and *where* to place a cache in a system (client, CDN, server, DB) — without looking at notes.
+ 
+---
+ 
+### 📖 Framework to Memorize
+ 
+- [ ] **Cache hit ratio** — (hits ÷ total requests); aim for >95% in a well-tuned cache
+- [ ] **Cache-Aside (Lazy Loading)** — App checks cache first; on miss, fetches from DB, then writes to cache
+- [ ] **Write-Through** — Every write goes to cache AND DB simultaneously; cache always fresh, but write latency doubles
+- [ ] **Write-Back (Write-Behind)** — Write to cache only, async flush to DB; fast writes, risk of data loss on crash
+- [ ] **Read-Through** — Cache sits in front of DB; cache library handles DB fetch on miss transparently
+- [ ] **Cache eviction policies** — LRU (Least Recently Used), LFU (Least Frequently Used), TTL expiry
+- [ ] **Cache stampede / Thundering Herd** — Many cache misses at once all hit DB; mitigation: mutex lock or probabilistic early expiry
+- [ ] **CDN (Content Delivery Network)** — Edge servers geographically close to users; caches static assets (images, JS, CSS, video)
+- [ ] **CDN push vs pull** — Push: you upload content to CDN proactively; Pull: CDN fetches from origin on first request
+---
+ 
+### 📐 Where to Cache — Layer by Layer
+ 
+```
+ [Client Browser]    → Cache: HTTP headers (Cache-Control, ETag), localStorage
+        ↓
+ [CDN Edge Node]     → Cache: static assets, entire HTML pages (for SSG sites)
+        ↓
+ [Load Balancer]     → Cache: TLS session resumption (minor)
+        ↓
+ [App Server]        → Cache: in-memory (local), or Redis (shared across servers)
+        ↓
+ [Database]          → Cache: DB query cache, buffer pool (InnoDB), materialized views
+```
+ 
+**Rule:** Cache as *close to the user* as possible. CDN first, Redis second, DB last.
+ 
+---
+ 
+### 🗂️ Cache Strategy Decision Table
+ 
+| Use Case                             | Strategy          | Why                                                    |
+|--------------------------------------|-------------------|--------------------------------------------------------|
+| User profile (read-heavy, rare write)| Cache-Aside       | Simple, only cache what's requested                    |
+| Product inventory (must never be stale) | Write-Through  | Keeps cache consistent with every purchase             |
+| Analytics counters, leaderboards     | Write-Back        | Burst write performance; acceptable eventual flush     |
+| Static assets (images, videos)       | CDN + pull        | Geographic proximity, offloads origin bandwidth        |
+| Session tokens                       | Redis + TTL       | Fast lookup, automatic expiry without manual cleanup   |
+ 
+---
+ 
+### 📝 Practice Calculation
+ 
+```
+YouTube homepage feed — caching impact:
+ 
+Without cache:
+- DAU: 2B users, 5 feed loads/day = 10B DB reads/day
+- Read QPS: 10B ÷ 86,400 ≈ 115,000 QPS
+- At ~500 QPS/DB replica → need ~230 DB replicas ❌ (too expensive)
+ 
+With Redis cache (95% hit rate):
+- Cache QPS: 115,000 × 0.95 = 109,250 QPS served from Redis ✅
+- DB QPS after cache: 115,000 × 0.05 = 5,750 QPS
+- At ~500 QPS/DB replica → need only ~12 replicas ✅
+ 
+Redis sizing:
+- Avg feed payload: 2 KB
+- Unique cached feeds: 50M (not all 2B users are active at once)
+- Cache RAM needed: 50M × 2 KB = ~100 GB → 3× Redis nodes (32 GB each) with replication
+```
+ 
+- [ ] Re-derive the Redis node count for a Twitter-like timeline (100M active users, 1 KB avg payload)
+- [ ] Note: does cache invalidation strategy change when a user *posts* a new tweet? (hint: write-through on their followers' feeds → fan-out problem)
+---
+ 
+### 📚 Resources
+ 
+- [ ] Read: **ByteByteGo — A Crash Course in Caching** blog post
+- [ ] Read: **AWS ElastiCache — Redis vs Memcached** (docs.aws.amazon.com)
+- [ ] Watch: **Exponent — Caching in System Design Interviews** (YouTube)
+- [ ] Read: **Cloudflare — How CDNs Work** (cloudflare.com/learning)
+---
+ 
+### 📋 Create a reference note: `SD-Reference-Caching-Strategies.md`
+ 
+---
+ 
+## 🗓️ Week 2 — Progress Tracker
+ 
+| Day | Topic                                   | Concepts Done | Practice Done | Reference Note |
+|-----|-----------------------------------------|:-------------:|:-------------:|:--------------:|
+| 8   | Scaling + Load Balancers                | ☐             | ☐             | ☐              |
+| 9   | Databases — SQL/NoSQL, Replication, Sharding | ☐        | ☐             | ☐              |
+| 10  | Caching — Redis, CDN, Strategies        | ☐             | ☐             | ☐              |
+ 
+---
+ 
+> **💡 Week 2 Theme:** Every topic this week is about *what happens when one machine isn't enough*.
+> Scaling adds servers, DBs split data, caches absorb reads — these three tools together handle 90% of interview scaling questions.
+
+
