@@ -1011,20 +1011,205 @@ Redis sizing:
 ---
  
 ### 📋 Create a reference note: `SD-Reference-Caching-Strategies.md`
+
+---
+
+# 🏛️ Day 11 — System Design: Storage & Bandwidth Estimation
+ 
+> **Today's Goal:** Learn how to estimate storage requirements and bandwidth for a large-scale system — a critical skill in every system design interview.
  
 ---
  
-## 🗓️ Week 2 — Progress Tracker
+## 🧠 Why Does This Matter?
  
-| Day | Topic                                   | Concepts Done | Practice Done | Reference Note |
-|-----|-----------------------------------------|:-------------:|:-------------:|:--------------:|
-| 8   | Scaling + Load Balancers                | ☐             | ☐             | ☐              |
-| 9   | Databases — SQL/NoSQL, Replication, Sharding | ☐        | ☐             | ☐              |
-| 10  | Caching — Redis, CDN, Strategies        | ☐             | ☐             | ☐              |
+When you design a large-scale system (like WhatsApp, Instagram, or YouTube), interviewers **always** ask:
+- "How much storage will you need?"
+- "What's your expected bandwidth?"
+These are called **back-of-the-envelope calculations** — rough estimates that show you understand how systems scale. You don't need to be exactly right; you need to be *reasonably close* and show your reasoning.
  
 ---
  
-> **💡 Week 2 Theme:** Every topic this week is about *what happens when one machine isn't enough*.
-> Scaling adds servers, DBs split data, caches absorb reads — these three tools together handle 90% of interview scaling questions.
-
-
+## 📚 Framework — The 5 Building Blocks
+ 
+### 1. 🗄️ Storage Estimation
+ 
+**Formula:**
+```
+Storage = writes/day × avg object size × retention period (years)
+```
+ 
+**What each part means:**
+| Term | Meaning | Example |
+|------|---------|---------|
+| `writes/day` | How many new items are created daily | 20 billion messages/day |
+| `avg object size` | How big is each item on average | 100 bytes per text message |
+| `retention period` | How long do you keep the data | 5 years |
+ 
+**Step-by-step:**
+1. Figure out how many items are written **per day**
+2. Multiply by the **average size** of one item
+3. Multiply by the **number of years** you store data
+4. Always account for **replication** (see point 4 below)
+---
+ 
+### 2. 📥 Bandwidth — Ingress (Data Coming IN)
+ 
+**Formula:**
+```
+Ingress Bandwidth = write QPS × avg request size
+```
+ 
+**What this means:**
+- **QPS** = Queries Per Second (how many requests hit your server every second)
+- **Ingress** = data flowing *into* your system (uploads, writes, sends)
+**Converting writes/day → QPS:**
+```
+QPS = writes/day ÷ 86,400 seconds/day
+```
+> 💡 Quick trick: divide by ~100,000 for a rough estimate
+ 
+**Example:**
+```
+20 billion msgs/day ÷ 86,400 ≈ 231,000 QPS
+231K QPS × 100 bytes = ~23 MB/s ingress
+```
+ 
+---
+ 
+### 3. 📤 Bandwidth — Egress (Data Going OUT)
+ 
+**Formula:**
+```
+Egress Bandwidth = read QPS × avg response size
+```
+ 
+**What this means:**
+- **Egress** = data flowing *out* of your system (downloads, reads, views)
+- Usually **higher** than ingress because users read more than they write
+- A common assumption: reads are **2× to 10×** more frequent than writes
+**Example:**
+```
+If ingress = 23 MB/s and reads are 2× writes:
+Egress = 23 MB/s × 2 = ~46 MB/s
+```
+ 
+---
+ 
+### 4. 🔁 Replication Factor
+ 
+**Rule of thumb:** Multiply your raw storage by **3×**
+ 
+**Why?**
+- Real systems store **3 copies** of your data across different servers/data centers
+- If one server crashes, your data still exists on the other two
+- This is the industry standard (used by Google, AWS, Facebook, etc.)
+```
+Replicated Storage = raw storage × 3
+```
+ 
+**Example:**
+```
+Raw storage needed: 2 TB/day
+With replication: 2 TB × 3 = 6 TB/day actual storage consumed
+```
+ 
+---
+ 
+### 5. 🗜️ Compression
+ 
+**Rule of thumb:** Text data can be compressed to **0.3–0.5×** of its original size
+ 
+**What this means:**
+- Compression reduces storage needs significantly for text
+- A 100-byte message might compress to 30–50 bytes
+- Images/videos are already compressed and don't benefit much
+```
+Compressed Storage = raw storage × compression ratio (0.3 to 0.5)
+```
+ 
+> ⚠️ In interviews, mention compression as an optimization but clarify that your base estimate doesn't include it unless asked to.
+ 
+---
+ 
+## 🔢 Key Numbers to Memorize
+ 
+These are essential conversions you'll use constantly:
+ 
+| Unit | Value |
+|------|-------|
+| 1 KB | 1,000 bytes (or 1,024 — use 1,000 for simplicity) |
+| 1 MB | 1,000 KB = 10⁶ bytes |
+| 1 GB | 1,000 MB = 10⁹ bytes |
+| 1 TB | 1,000 GB = 10¹² bytes |
+| 1 PB | 1,000 TB = 10¹⁵ bytes |
+| Seconds/day | 86,400 ≈ 100,000 |
+| Million | 10⁶ |
+| Billion | 10⁹ |
+ 
+---
+ 
+## 📝 Practice: WhatsApp Full Estimation
+ 
+The framework above is applied in full detail to WhatsApp — the gold standard practice problem for capacity estimation.
+ 
+👉 **[View WhatsApp-Capacity-Estimate.md](./WhatsApp-Capacity-Estimate.md)**
+ 
+It covers all assumptions, step-by-step storage and bandwidth calculations, a final summary table, and optimizations worth mentioning in an interview.
+ 
+---
+ 
+## 🧩 How to Approach Estimation in an Interview
+ 
+Follow this structured approach every time:
+ 
+```
+1. CLARIFY — Ask about scale, users, retention
+   "How many DAU? What's the read/write ratio? How long do we store data?"
+ 
+2. ESTIMATE base numbers
+   "Let's assume 1B DAU, each sending 20 messages..."
+ 
+3. CALCULATE storage
+   writes/day × object size × years × replication
+ 
+4. CALCULATE bandwidth
+   ingress = write QPS × request size
+   egress = read QPS × response size
+ 
+5. MENTION optimizations
+   "We could apply compression to reduce text storage by ~50%"
+   "CDN caching would significantly reduce egress costs for popular content"
+```
+ 
+---
+ 
+## ⚠️ Common Beginner Mistakes
+ 
+| Mistake | Fix |
+|---------|-----|
+| Forgetting replication | Always multiply by 3× unless told otherwise |
+| Using bytes when you mean KB | Double-check your units at every step |
+| Assuming reads = writes | Reads are almost always 2x–10x more than writes |
+| Only estimating one type of data | Account for text, images, videos, metadata separately |
+| Not stating assumptions | Always say "I'm assuming X…" before calculating |
+ 
+---
+ 
+## 🔑 Key Takeaways
+ 
+1. **Storage = writes/day × object size × retention × replication**
+2. **Ingress = write QPS × request size**
+3. **Egress = read QPS × response size** (usually 2×–10× ingress)
+4. Always multiply by **3× for replication**
+5. Compression gives **0.3–0.5× reduction** for text data
+6. Convert writes/day to QPS by dividing by **86,400** (≈ 100,000)
+7. State your **assumptions clearly** before every calculation
+---
+ 
+## ✅ Today's Checklist
+ 
+- [ ] Work through the WhatsApp numbers in your notes manually (without looking)
+- [ ] Commit [`WhatsApp-Capacity-Estimate.md`](./WhatsApp-Capacity-Estimate.md) to GitHub
+- [ ] Try estimating storage & bandwidth for **Twitter** (as extra practice)
+- [ ] Memorize the unit conversion table (KB → MB → GB → TB → PB)
+- [ ] Practice converting writes/day to QPS (divide by 86,400)
