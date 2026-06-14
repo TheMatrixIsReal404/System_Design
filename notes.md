@@ -1213,3 +1213,16 @@ Follow this structured approach every time:
 - [ ] Try estimating storage & bandwidth for **Twitter** (as extra practice)
 - [ ] Memorize the unit conversion table (KB → MB → GB → TB → PB)
 - [ ] Practice converting writes/day to QPS (divide by 86,400)
+
+
+
+
+## 📝 Day 12 — WhatsApp Capacity Estimation
+
+
+[Whatsapp Estimation](/Day_12_WhatsApp-Capacity-Estimate.md)
+
+## 📝 Day 12 — Twitter Infrastructure Estimation
+
+
+[Twitter Infrastructure Estimation](/Twitter-Infrastructure-Estimate.md)
