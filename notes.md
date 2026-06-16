@@ -1222,7 +1222,26 @@ Follow this structured approach every time:
 
 [Whatsapp Estimation](/Day_12_WhatsApp-Capacity-Estimate.md)
 
-## 📝 Day 12 — Twitter Infrastructure Estimation
+## 📝 Day 13 — Twitter Infrastructure Estimation
 
 
 [Twitter Infrastructure Estimation](/Twitter-Infrastructure-Estimate.md)
+
+
+# 🛡️ Day 15 — System Design: TCP vs UDP Fundamentals
+
+## 🔗 Today's SD Goal
+
+Understand the trade-offs between TCP and UDP and *why* each protocol exists.
+
+## ✅ Today's Checklist
+
+- [ ] TCP — connection-oriented, 3-way handshake (SYN → SYN-ACK → ACK), guaranteed ordered delivery, congestion control
+- [ ] UDP — connectionless, no handshake, no delivery guarantee, lower overhead
+- [ ] When to use which — TCP for HTTP/file transfer/email; UDP for DNS, video streaming, gaming, VoIP
+- [ ] Header overhead — TCP header (~20 bytes) vs UDP header (8 bytes)
+- [ ] Watch: Hussein Nasser — TCP vs UDP Crash Course (YouTube)
+
+## 📝 Reference Note
+
+[TCP vs UDP Reference](/SD-Reference-TCP-vs-UDP.md)
