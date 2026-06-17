@@ -1245,3 +1245,204 @@ Understand the trade-offs between TCP and UDP and *why* each protocol exists.
 ## 📝 Reference Note
 
 [TCP vs UDP Reference](/SD-Reference-TCP-vs-UDP.md)
+
+
+# 🏗️ Day 16 — HTTP/HTTPS Protocols Deep Dive
+ 
+> 🎯 **Today's SD Goal**
+> Be able to draw the anatomy of an HTTP request/response and explain the TLS handshake from memory.
+ 
+---
+ 
+## 1. HTTP Request Anatomy
+ 
+An HTTP request is just **structured plain text** sent over a TCP connection. Every request has four parts:
+ 
+```
+METHOD  /path?query=string  HTTP/1.1        <-- Request line
+Host: api.example.com                       <-- Headers
+Authorization: Bearer abc123
+Content-Type: application/json
+Content-Length: 27
+ 
+{"name": "ankit", "city": "ldh"}             <-- Body (optional)
+```
+ 
+| Part | What it is | Beginner intuition |
+|---|---|---|
+| **Method** | GET, POST, PUT, PATCH, DELETE | "What do you want me to do?" |
+| **Path** | `/users/42` | "Which resource?" |
+| **Headers** | Key-value metadata | "Extra context about the request" |
+| **Body** | Raw data (JSON, form, file) | "The actual payload" — only present in POST/PUT/PATCH usually |
+ 
+**Common methods cheat sheet:**
+ 
+| Method | Idempotent? | Has body? | Use case |
+|---|---|---|---|
+| GET | ✅ Yes | ❌ No | Fetch data |
+| POST | ❌ No | ✅ Yes | Create new resource |
+| PUT | ✅ Yes | ✅ Yes | Replace entire resource |
+| PATCH | ❌ No | ✅ Yes | Partially update resource |
+| DELETE | ✅ Yes | ❌ Usually no | Remove resource |
+ 
+*Idempotent = calling it 5 times has the same effect as calling it once. GET-ing a user 5 times doesn't change anything; POST-ing "create user" 5 times creates 5 users.*
+ 
+---
+ 
+## 2. HTTP Response Anatomy
+ 
+```
+HTTP/1.1 200 OK                              <-- Status line
+Content-Type: application/json               <-- Headers
+Content-Length: 58
+Cache-Control: max-age=3600
+ 
+{"id": 42, "name": "ankit", "city": "ldh"}    <-- Body
+```
+ 
+| Part | What it is |
+|---|---|
+| **Status line** | Protocol version + status code + short text reason |
+| **Headers** | Caching rules, content type, cookies, security headers |
+| **Body** | The actual data being returned |
+ 
+**Status code families — memorize the *first digit*, not every code:**
+ 
+| Range | Family | Meaning | Beginner intuition |
+|---|---|---|---|
+| 1xx | Informational | "Hold on, still working" | Rarely seen directly (e.g. 101 Switching Protocols for WebSockets) |
+| 2xx | Success | "Got it, all good" | 200 OK, 201 Created, 204 No Content |
+| 3xx | Redirection | "Go look over there instead" | 301 Moved Permanently, 304 Not Modified (cache hit) |
+| 4xx | Client error | "You messed up" | 400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found, 429 Too Many Requests |
+| 5xx | Server error | "I messed up" | 500 Internal Server Error, 502 Bad Gateway, 503 Service Unavailable |
+ 
+> 💡 **401 vs 403, the classic confusion**
+> 401 = "I don't know who you are" (missing/invalid auth)
+> 403 = "I know who you are, but you're not allowed" (valid auth, no permission)
+ 
+---
+ 
+## 3. Statelessness — Why Cookies/Sessions/Tokens Exist
+ 
+HTTP is **stateless**: the server treats every request as if it's the first time it has ever seen you. It has no built-in memory of your previous request.
+ 
+```
+Request 1: "Log me in as ankit"        → Server: "OK ✅"
+Request 2: "Show me my orders"         → Server: "...who are you? 🤷"
+```
+ 
+This is a problem because most apps need to know *who you are* across multiple requests (logged-in state, shopping cart, etc). Three solutions evolved:
+ 
+```
+┌─────────────────────────────────────────────────────────┐
+│  COOKIES        → small key-value pairs stored in browser │
+│                    automatically sent with every request  │
+│                                                             │
+│  SESSIONS        → server keeps state in memory/Redis,     │
+│                    cookie holds only a session_id pointer  │
+│                                                             │
+│  TOKENS (JWT)    → server encodes state INTO the token     │
+│                    itself, no server-side storage needed   │
+└─────────────────────────────────────────────────────────┘
+```
+ 
+| Approach | Where state lives | Scales horizontally? | Revocation |
+|---|---|---|---|
+| Session (cookie + server store) | Server (Redis/DB) | Needs shared store across servers | Easy — just delete the session |
+| JWT (token-based) | Encoded in the token itself | Yes, stateless servers | Hard — must wait for expiry or maintain a blocklist |
+ 
+> This connects back to Day 1–6: a stateless server is what lets you put 10 identical servers behind a load balancer without worrying about "sticky sessions."
+ 
+---
+ 
+## 4. TLS Handshake Walkthrough
+ 
+**Why it exists:** HTTP sends plain text — anyone on the network can read it. HTTPS = HTTP + TLS, which encrypts the data in transit.
+ 
+**The core problem TLS solves:** two strangers (browser + server) need to agree on a *secret encryption key*, over a network that an attacker might be listening on.
+ 
+### The 4-step handshake (simplified, TLS 1.2 style)
+ 
+```
+ CLIENT                                          SERVER
+   │                                                │
+   │  1. "Hello, here are the ciphers I support"    │
+   │ ─────────────────────────────────────────────► │
+   │                                                │
+   │  2. "Here's my certificate + public key"       │
+   │ ◄───────────────────────────────────────────── │
+   │                                                │
+   │  3. Client verifies cert, generates a          │
+   │     symmetric session key, encrypts it with    │
+   │     server's PUBLIC key, sends it over          │
+   │ ─────────────────────────────────────────────► │
+   │                                                │
+   │  4. Server decrypts with its PRIVATE key,       │
+   │     both sides now share the same symmetric key │
+   │ ◄═══════════ encrypted traffic flows ══════════►│
+```
+ 
+Step-by-step in plain English:
+ 
+1. **Client Hello** — browser says "I want to talk securely, here's a list of encryption methods I know."
+2. **Server Hello + Certificate** — server replies with its TLS certificate (issued by a trusted Certificate Authority like Let's Encrypt/DigiCert) containing its **public key**.
+3. **Certificate validation + key exchange** — the browser checks the cert is signed by a CA it trusts (chain of trust) and isn't expired/revoked. It then generates a random symmetric key, encrypts it using the server's public key, and sends it.
+4. **Session key established** — only the server's matching **private key** can decrypt that message. Now both sides know the same symmetric key and switch to symmetric encryption for the rest of the conversation.
+### Why switch from asymmetric → symmetric mid-handshake?
+ 
+| | Asymmetric (RSA/ECDHE) | Symmetric (AES) |
+|---|---|---|
+| Speed | Slow (heavy math) | Fast (~1000x faster) |
+| Key count | 2 keys (public/private) | 1 shared key |
+| Used for | Solving the "how do two strangers agree on a secret" problem | Bulk encrypting actual data |
+ 
+**Intuition:** asymmetric crypto is great for *exchanging a secret safely* but too slow to encrypt every byte of every page load. So it's used once, just to securely hand over a symmetric key — then the fast algorithm takes over for the actual data transfer. This is called a **hybrid encryption** approach.
+ 
+> 🔐 Note: Modern TLS 1.3 reduces this to a 1-round-trip handshake (faster), but the *core idea* — asymmetric for key exchange, symmetric for bulk data — stays the same.
+ 
+---
+ 
+## 5. HTTP/1.1 vs HTTP/2 — Head-of-Line Blocking
+ 
+**The problem with HTTP/1.1:** each TCP connection can only have one request "in flight" waiting for its response at a time (without pipelining hacks). If request #1 is slow, request #2 has to wait behind it on that connection — even though they're unrelated.
+ 
+```
+HTTP/1.1 (one connection, requests queue up):
+ 
+Conn 1:  [Req A.........] [Req B...] [Req C.....]
+                ▲
+        Req B and C are BLOCKED until A finishes
+        (head-of-line blocking)
+ 
+Workaround: browsers open 6 parallel TCP connections per domain
+```
+ 
+**HTTP/2's fix: multiplexing.** Multiple requests/responses share *one* TCP connection, broken into small interleaved "frames," tagged with a stream ID so they can be reassembled in any order.
+ 
+```
+HTTP/2 (one connection, multiplexed streams):
+ 
+Conn 1:  [A1][B1][C1][A2][C2][B2][A3]...
+          ▲  ▲   ▲
+       Different streams interleaved on the SAME connection
+       No request blocks another at the HTTP layer
+```
+ 
+| | HTTP/1.1 | HTTP/2 |
+|---|---|---|
+| Connections needed | Multiple (browser opens ~6) | One per origin |
+| Head-of-line blocking | Yes, at HTTP layer | No, at HTTP layer (but can still happen at TCP layer — fixed by HTTP/3/QUIC) |
+| Header overhead | Repeated raw text each request | Compressed (HPACK) |
+ 
+---
+ 
+## 🔗 Related Notes
+- Practice problems for today: see `day16-practice.md`
+- Builds on: Day 1–6 (load balancers, stateless servers)
+- Connects to: Day 11–13 (bandwidth estimation — TLS adds ~1-2 extra round trips of latency, relevant when estimating P99 latency budgets)
+## ✅ Concepts Checklist
+- [ ] HTTP request anatomy — method, path, headers, body
+- [ ] HTTP response anatomy — status line, headers, body, status code families
+- [ ] Statelessness — why cookies/sessions/tokens exist
+- [ ] TLS handshake — cert validation, asymmetric → symmetric session key
+- [ ] HTTP/2 multiplexing vs HTTP/1.1 head-of-line blocking
