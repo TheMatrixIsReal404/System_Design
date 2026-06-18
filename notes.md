@@ -1446,3 +1446,234 @@ Conn 1:  [A1][B1][C1][A2][C2][B2][A3]...
 - [ ] Statelessness — why cookies/sessions/tokens exist
 - [ ] TLS handshake — cert validation, asymmetric → symmetric session key
 - [ ] HTTP/2 multiplexing vs HTTP/1.1 head-of-line blocking
+
+
+# Day 17 — REST APIs and API Design Principles
+ 
+## 🎯 Today's Goal
+Internalize what makes an API "RESTful" — this is the foundation for Day 19's hands-on design task.
+ 
+---
+ 
+## 1. Resources & URIs — Nouns, Not Verbs
+ 
+REST (REpresentational State Transfer) models everything in your system as a **resource** — a noun — identified by a unique URI. The HTTP verb (GET/POST/PUT/PATCH/DELETE) is what tells the server what to *do* to that resource. The action should never live in the URL itself.
+ 
+```
+✅ GOOD (noun-based, verb describes action)
+GET    /users/123        → read user 123
+POST   /users             → create a new user
+DELETE /users/123         → remove user 123
+ 
+❌ BAD (verb baked into the path)
+GET /getUser?id=123
+POST /createUser
+POST /deleteUser?id=123
+```
+ 
+**Why this matters:** once verbs leak into the path, you've quietly reinvented RPC (Remote Procedure Call) and lost most of REST's benefits — predictable URLs, cacheability, and the ability to reuse the same resource path across different HTTP methods.
+ 
+### Naming conventions
+| Rule | Good | Bad |
+|---|---|---|
+| Use plural nouns | `/users` | `/user` |
+| Lowercase, hyphenated | `/order-items` | `/orderItems` |
+| Nest to show relationships | `/users/123/orders` | `/getOrdersForUser?id=123` |
+| Don't nest too deep (max ~2-3 levels) | `/users/123/orders/456` | `/users/123/orders/456/items/789/reviews/1` |
+| No trailing verbs | `/orders/456/cancel` is a borderline exception (see note below) | `/cancelOrder/456` |
+ 
+> **Note on action-like endpoints:** Sometimes a pure CRUD mapping doesn't fit reality (e.g., "cancel an order" isn't really "delete"). The pragmatic RESTful approach is to model the action as a sub-resource or state change: `POST /orders/456/cancel` or `PATCH /orders/456` with `{"status": "cancelled"}`. Both are debated in practice — know the tradeoff, don't treat REST as religious law.
+ 
+### Resource hierarchy (mental model)
+ 
+```
+/users
+  └── /users/123                    (a specific user)
+        └── /users/123/orders        (that user's orders — collection)
+              └── /users/123/orders/456   (one specific order)
+```
+ 
+- A path ending in a **collection name** (`/users`, `/orders`) → operates on the *set*.
+- A path ending in an **ID** (`/users/123`) → operates on *one item*.
+---
+ 
+## 2. HTTP Verbs as CRUD
+ 
+| HTTP Verb | CRUD op | Idempotent? | Safe?* | Typical body | Example |
+|---|---|---|---|---|---|
+| `GET` | Read | ✅ Yes | ✅ Yes | None | `GET /users/123` |
+| `POST` | Create | ❌ No | ❌ No | New resource data | `POST /users` |
+| `PUT` | Update (full replace) | ✅ Yes | ❌ No | Entire resource | `PUT /users/123` |
+| `PATCH` | Update (partial) | ⚠️ Not guaranteed | ❌ No | Only changed fields | `PATCH /users/123` |
+| `DELETE` | Remove | ✅ Yes | ❌ No | None (usually) | `DELETE /users/123` |
+ 
+*\*"Safe" means the request doesn't change server state — it's read-only.*
+ 
+### Idempotency, explained simply
+**Idempotent** = calling it once or calling it 100 times in a row produces the *same end state* on the server.
+ 
+```
+PUT /users/123 {"name": "Ankit"}     → user 123's name is "Ankit"
+PUT /users/123 {"name": "Ankit"}     → still "Ankit" (no change, same result)
+                                         ✅ idempotent
+ 
+POST /users {"name": "Ankit"}        → creates user #501
+POST /users {"name": "Ankit"}        → creates ANOTHER user #502
+                                         ❌ not idempotent — each call adds a new record
+```
+ 
+### PUT vs PATCH — the question that trips up beginners
+| | `PUT` | `PATCH` |
+|---|---|---|
+| Sends | The **whole** resource | Only the **fields that changed** |
+| If you omit a field | It gets wiped/reset | Untouched fields stay as-is |
+| Example | `PUT /users/123 {"name":"Ankit","email":"a@x.com"}` | `PATCH /users/123 {"email":"a@x.com"}` |
+ 
+Rule of thumb: if your client only has *part* of the data to update, use `PATCH`. If it has the complete object, `PUT` is cleaner and safer (no risk of accidentally dropping fields).
+ 
+---
+ 
+## 3. Statelessness
+ 
+**Stateless** means the server stores **no memory of previous requests** from a client between calls. Every single request must carry everything the server needs to process it — auth tokens, headers, parameters — as if it were the very first request ever made.
+ 
+### Stateless vs Stateful — side by side
+ 
+```
+STATEFUL (session-based, NOT RESTful)
+─────────────────────────────────────
+Client → "login"        → Server creates session, stores it in memory on Server A
+Client → "get my orders" → MUST hit Server A again (it's the only one that remembers the session)
+                            ❌ breaks if Server A goes down, hard to load-balance
+ 
+ 
+STATELESS (RESTful)
+─────────────────────────────────────
+Client → "get my orders" + Authorization: Bearer <token>  → Server A handles it, no memory needed
+Client → "get my orders" + Authorization: Bearer <token>  → Server B handles it just as well
+                            ✅ any server can handle any request
+```
+ 
+### Why this matters for scaling (ties back to Day 8-10 notes)
+Because no single server "owns" a client's session, requests can be load-balanced across *any* server in the fleet. This is what makes horizontal scaling clean — you can add or remove servers without worrying about which one "remembers" a given user. Session data, if needed, lives in the request itself (e.g., a JWT token) or in a shared external store (e.g., Redis) — never in one server's local memory.
+ 
+---
+ 
+## 4. Status Codes
+ 
+Status codes are grouped by their leading digit. You don't need to memorize all of them — just internalize the *ranges* and the handful of codes you'll see constantly.
+ 
+| Range | Meaning | You'll use these constantly |
+|---|---|---|
+| `2xx` | Success | `200`, `201`, `204` |
+| `4xx` | Client made a mistake | `400`, `401`, `403`, `404` |
+| `5xx` | Server made a mistake | `500`, `503` |
+ 
+### The essential codes
+ 
+| Code | Name | When to use it |
+|---|---|---|
+| `200` | OK | Generic success — `GET`/`PUT`/`PATCH` request succeeded, body returned |
+| `201` | Created | A `POST` successfully created a new resource (return the new resource + its URI in `Location` header) |
+| `204` | No Content | Request succeeded but there's nothing to return (e.g., a successful `DELETE`) |
+| `400` | Bad Request | Malformed request — invalid JSON, missing required field |
+| `401` | Unauthorized | "I don't know who you are" — missing/invalid credentials |
+| `403` | Forbidden | "I know who you are, but you're not allowed to do this" |
+| `404` | Not Found | Resource doesn't exist |
+| `500` | Internal Server Error | Something broke on the server, unhandled |
+| `503` | Service Unavailable | Server temporarily can't handle the request (overloaded, maintenance, down dependency) |
+ 
+### The classic confusion: 401 vs 403
+```
+401 Unauthorized  →  "Who ARE you?"        (authentication problem — no/bad token)
+403 Forbidden      →  "I know you, but NO."  (authorization problem — valid token, insufficient permission)
+```
+ 
+---
+ 
+## 5. Versioning, Pagination & Idempotency (applied)
+ 
+### Versioning — letting your API evolve without breaking clients
+| Approach | Example | Pros | Cons |
+|---|---|---|---|
+| URI versioning | `/v1/users` | Simple, visible, easy to route/cache | Pollutes the URL, "not very RESTful" purists complain |
+| Header versioning | `Accept: application/vnd.myapi.v1+json` | Keeps URLs clean | Harder to test in a browser, less discoverable |
+| Query param | `/users?version=1` | Easy to default | Easy to forget/omit accidentally |
+ 
+Most real-world public APIs (Stripe, Twitter/X, GitHub) use **URI versioning** (`/v1/...`) because it's the most explicit and cache-friendly, even though it's technically the "least pure" REST approach.
+ 
+### Pagination — don't return 10 million rows in one response
+| Style | Example | Pros | Cons |
+|---|---|---|---|
+| Offset-based | `/orders?page=2&limit=20` | Simple, supports "jump to page N" | Slow on large offsets, breaks if rows are added/removed mid-scroll |
+| Cursor-based | `/orders?cursor=eyJpZCI6NDU2fQ&limit=20` | Stable even with inserts/deletes, fast at scale | No "jump to page 50", slightly more complex to implement |
+ 
+```
+Offset-based flow:
+  page=1, limit=20  → rows 1-20
+  page=2, limit=20  → rows 21-40   (breaks if row 5 got deleted in between!)
+ 
+Cursor-based flow:
+  cursor=null        → first 20 rows + nextCursor="abc"
+  cursor="abc"        → next 20 rows + nextCursor="def"   (always correct, regardless of inserts/deletes)
+```
+ 
+### Idempotency keys — applying idempotency to POST
+`POST` is naturally *not* idempotent (each call creates a new thing). But what if a client's network drops right after sending a "charge $50" request, and it retries? You don't want to charge the customer twice.
+ 
+**Solution:** the client generates a unique `Idempotency-Key` header and sends it with the request. The server remembers keys it has already processed (briefly, e.g., 24h) and returns the *original* result instead of repeating the side effect.
+ 
+```
+POST /payments
+Idempotency-Key: 8f14e45f-ceea-467e-9a83-...
+Body: {"amount": 50, "currency": "USD"}
+ 
+→ First call: charges $50, stores result against this key
+→ Retry with same key: server sees it's already processed, returns the SAME response, does NOT charge again
+```
+ 
+This is exactly how Stripe's API works in production — a great real-world example to look at for Day 17's practice exercise.
+ 
+---
+ 
+## ✅ Concept Checklist
+- [ ] Resources & URIs — nouns, not verbs (`/users/123` not `/getUser`)
+- [ ] HTTP verbs as CRUD — `GET` read, `POST` create, `PUT`/`PATCH` update, `DELETE` remove
+- [ ] Statelessness — every request carries everything the server needs
+- [ ] Status codes — `2xx`/`4xx`/`5xx` ranges, and the 401 vs 403 distinction
+- [ ] Versioning, pagination & idempotency — `/v1/...`, `?page=2&limit=20`, idempotent `PUT` vs non-idempotent `POST`
+---
+ 
+## 📝 Practice (fill this in yourself — use as your answer key check, not a shortcut)
+ 
+Pick one real API you've used (GitHub, Stripe, Twitter/X, Reddit, etc.) and fill in:
+ 
+| Question | Your notes |
+|---|---|
+| Which API did you pick? | |
+| List 3-4 resources and their URIs | |
+| Which HTTP verbs does it use, and where? | |
+| Which status codes have you actually seen it return? | |
+| Is it URI-versioned, header-versioned, or unversioned? | |
+| Offset or cursor pagination? | |
+ 
+**3 things it does well:**
+1.
+2.
+3.
+ 
+**1 thing you'd design differently:**
+1.
+ 
+---
+ 
+## 🔗 Related Notes
+- `SD-Reference-Scaling-and-LB.md` — why statelessness enables horizontal scaling
+- `SD-Reference-TCP-vs-UDP.md` — Day 15, the transport layer underneath every HTTP call
+- Day 19 — hands-on API design task (builds directly on today)
+---
+ 
+### Suggested commit
+```
+docs(day17): add REST API and API design principles notes
+```
