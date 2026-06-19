@@ -1677,3 +1677,330 @@ Pick one real API you've used (GitHub, Stripe, Twitter/X, Reddit, etc.) and fill
 ```
 docs(day17): add REST API and API design principles notes
 ```
+
+
+
+# Day 18 — DNS Record Types & L4 vs L7 Load Balancing
+ 
+---
+ 
+## 🧠 Today's Goal
+ 
+Understand how DNS translates names to IPs using different record types, what TTL means in practice,
+and how L4 vs L7 load balancers make routing decisions differently.
+ 
+---
+ 
+## 📖 Concept 1 — DNS Record Types
+ 
+### What is DNS?
+ 
+Think of DNS like a phone book. You remember "google.com" (a name), but computers need
+`142.250.195.78` (an IP address) to actually talk to each other. DNS does that translation.
+ 
+```
+You type:        google.com
+DNS returns:     142.250.195.78
+Browser uses:    142.250.195.78 to connect
+```
+ 
+### The 5 Record Types You Must Know
+ 
+```
+┌────────┬──────────────────────────────────┬──────────────────────────────────────┐
+│ Record │ What it stores                   │ Real-world example                   │
+├────────┼──────────────────────────────────┼──────────────────────────────────────┤
+│ A      │ Domain → IPv4 address            │ zomato.com → 54.239.28.85            │
+│ AAAA   │ Domain → IPv6 address            │ zomato.com → 2600:1f18::1 (v6)       │
+│ CNAME  │ Alias → another domain name      │ www.zomato.com → zomato.com          │
+│ MX     │ Where to deliver email for       │ zomato.com mail → mail.zomato.com    │
+│        │ this domain                      │                                      │
+│ TXT    │ Arbitrary text (verification,    │ "v=spf1 include:google.com ~all"     │
+│        │ SPF, DKIM)                       │                                      │
+└────────┴──────────────────────────────────┴──────────────────────────────────────┘
+```
+ 
+### CNAME — The "nickname" record
+ 
+```
+❌  Without CNAME (you'd need to update two places every time the IP changes):
+    www.zomato.com  →  54.239.28.85
+    zomato.com      →  54.239.28.85
+ 
+✅  With CNAME (only the A record needs updating):
+    www.zomato.com  →  zomato.com   (CNAME — alias)
+    zomato.com      →  54.239.28.85 (A record — real IP)
+```
+ 
+> ⚠️ Rule: You can NEVER put a CNAME on a root/apex domain (`zomato.com`).
+> Only on subdomains (`www.zomato.com`, `api.zomato.com`).
+ 
+### TXT Record — Why does it exist?
+ 
+Used for proving ownership and configuring email security. Two common uses:
+ 
+```
+1. SPF (Sender Policy Framework)
+   "Only these mail servers are allowed to send email as @zomato.com"
+   → Prevents spammers from faking your domain in emails
+ 
+2. Domain Verification
+   Google/GitHub ask you to add a TXT record to prove you own the domain
+   e.g. "google-site-verification=abc123..."
+```
+ 
+---
+ 
+## 📖 Concept 2 — TTL (Time To Live)
+ 
+### What is TTL?
+ 
+TTL is the number of **seconds** a DNS resolver is allowed to cache (remember) a record.
+ 
+```
+Analogy:
+   TTL is like an expiry date on a sticky note.
+   If TTL = 300, the resolver keeps the answer for 5 minutes,
+   then throws it away and asks the DNS server again.
+```
+ 
+### TTL Trade-offs
+ 
+```
+┌──────────────────┬────────────────────────────────┬────────────────────────────────┐
+│ TTL Value        │ Pros                           │ Cons                           │
+├──────────────────┼────────────────────────────────┼────────────────────────────────┤
+│ Low (60–300s)    │ Changes propagate quickly      │ More DNS queries = higher load │
+│                  │ Good for failover scenarios     │                                │
+├──────────────────┼────────────────────────────────┼────────────────────────────────┤
+│ High (3600–86400)│ Fewer DNS queries = less load  │ Changes take hours to propagate│
+│                  │ Faster resolution (cached)     │ Bad during migrations          │
+└──────────────────┴────────────────────────────────┴────────────────────────────────┘
+```
+ 
+### Real interview trick:
+ 
+> **"Before migrating a server, lower the TTL to 60s a day in advance.
+> After migration, raise it back to 3600s."**
+> This ensures the old IP isn't cached for hours during the switch.
+ 
+---
+ 
+## 📖 Concept 3 — L4 vs L7 Load Balancing
+ 
+### The Big Mental Model
+ 
+Both distribute traffic across backend servers. The difference is **how much they understand**
+about the incoming request.
+ 
+```
+                         ┌────────────────────────────────────┐
+  Client                 │         Load Balancer              │
+  ──────  ─────────────► │                                    │ ──► Server 1
+  Request                │  L4: "I see TCP packets, port 443" │ ──► Server 2
+                         │  L7: "I see GET /api/feed HTTP/1.1"│ ──► Server 3
+                         └────────────────────────────────────┘
+```
+ 
+### L4 — Transport Layer Load Balancer
+ 
+Works at OSI Layer 4 (TCP/UDP). Routes based on **IP address + port number only**.
+It does NOT read the HTTP request. It's just moving packets.
+ 
+```
+Client → LB sees: src=192.168.1.5, dst=10.0.0.1, port=443
+LB decision: "I'll send TCP connections from this IP to Server 2"
+ 
+✅ Very fast (no HTTP parsing overhead)
+✅ Works with any protocol (TCP, UDP, not just HTTP)
+❌ Cannot route based on URL path, headers, or cookies
+❌ Cannot do SSL termination intelligently per path
+```
+ 
+### L7 — Application Layer Load Balancer
+ 
+Works at OSI Layer 7 (HTTP/HTTPS). Routes based on **the actual request content**.
+It reads the HTTP headers, path, cookies, and body.
+ 
+```
+Client → LB sees: GET /api/feed HTTP/1.1
+                  Host: zomato.com
+                  Cookie: session=xyz
+ 
+LB decision rules:
+  /api/*        ──► API server pool (3 servers)
+  /static/*     ──► CDN / static server
+  /admin/*      ──► Admin server (single instance)
+  Cookie=mobile ──► Mobile-optimized backend
+ 
+✅ Smart routing (A/B testing, canary deploys)
+✅ SSL termination at the LB (backends get plain HTTP)
+✅ Can modify headers, inject request IDs
+❌ Slower than L4 (must parse HTTP)
+❌ More complex to configure
+```
+ 
+### L4 vs L7 — When to use which
+ 
+```
+┌─────────────────────────────────┬────────────┬────────────┐
+│ Scenario                        │ L4         │ L7         │
+├─────────────────────────────────┼────────────┼────────────┤
+│ Max raw throughput (gaming UDP) │ ✅ Use L4  │ ❌         │
+│ Simple TCP proxy                │ ✅ Use L4  │ ❌         │
+│ Route /api vs /web differently  │ ❌         │ ✅ Use L7  │
+│ A/B testing (split by header)   │ ❌         │ ✅ Use L7  │
+│ SSL termination                 │ ❌         │ ✅ Use L7  │
+│ Microservices routing           │ ❌         │ ✅ Use L7  │
+└─────────────────────────────────┴────────────┴────────────┘
+```
+ 
+---
+ 
+## 📖 Concept 4 — Load Balancing Algorithms
+ 
+### 1. Round Robin (default)
+ 
+```
+Request 1 ──► Server A
+Request 2 ──► Server B
+Request 3 ──► Server C
+Request 4 ──► Server A  (cycles back)
+ 
+✅ Simple, no state needed
+❌ Ignores server load — a slow server still gets equal share
+```
+ 
+### 2. Least Connections
+ 
+```
+Server A: 10 active connections
+Server B: 3 active connections   ← next request goes here
+Server C: 7 active connections
+ 
+✅ Better for long-lived connections (WebSockets, file uploads)
+❌ Slightly more overhead (LB must track connection counts)
+```
+ 
+### 3. Weighted Round Robin
+ 
+```
+Server A: weight=3  (powerful machine)
+Server B: weight=1  (weaker machine)
+ 
+Distribution:
+  A, A, A, B, A, A, A, B ...
+ 
+✅ Good when servers have unequal capacity
+❌ Static weights; doesn't adapt to real-time load
+```
+ 
+### 4. IP Hash (Sticky Sessions)
+ 
+```
+hash(client_IP) % num_servers = which server this client ALWAYS goes to
+ 
+✅ Same client always hits same server (useful if server stores session)
+❌ Uneven distribution if IPs are imbalanced
+❌ If server dies, all its clients reroute and lose session
+```
+ 
+---
+ 
+## 📖 Concept 5 — Health Checks
+ 
+### Why do we need them?
+ 
+Without health checks, the LB keeps sending traffic to a dead server → requests fail.
+ 
+### How health checks work
+ 
+```
+Every N seconds (e.g. every 10s):
+ 
+LB ──► Server A: "Are you alive?" (GET /health)
+         Server A: 200 OK ──► Mark as HEALTHY ✅
+ 
+LB ──► Server B: "Are you alive?"
+         Server B: [no response] ──► Mark as UNHEALTHY ❌
+         (LB stops sending traffic to B)
+ 
+LB ──► Server B again (after 30s): "Are you alive?"
+         Server B: 200 OK ──► Mark as HEALTHY again ✅
+```
+ 
+### Two types of health checks
+ 
+```
+┌──────────────────┬────────────────────────────────────────────────────┐
+│ Passive          │ LB watches real traffic — if errors pile up,       │
+│                  │ mark server unhealthy. No extra requests sent.     │
+├──────────────────┼────────────────────────────────────────────────────┤
+│ Active           │ LB sends dedicated probe requests (GET /health)    │
+│                  │ on a schedule. More reliable, catches issues early.│
+└──────────────────┴────────────────────────────────────────────────────┘
+```
+ 
+### A good /health endpoint should check:
+ 
+```
+✅ Returns 200 if: DB connection OK + cache reachable + disk not full
+❌ Returns 503 if: any dependency is down
+ 
+# Example response body (optional but nice):
+{
+  "status": "ok",
+  "db": "connected",
+  "cache": "connected",
+  "uptime_seconds": 3842
+}
+```
+ 
+---
+ 
+## ✏️ Practice (fill this in yourself — use `SD-Reference-DNS-LoadBalancers.md` as answer key)
+ 
+**Scenario: You're designing the DNS + LB setup for `api.zomato.com`**
+ 
+| Question | Your Answer |
+|---|---|
+| What DNS record type maps `api.zomato.com` to an IP? | |
+| What record would make `www.zomato.com` an alias for `zomato.com`? | |
+| If you're about to migrate servers, what do you do to TTL first? | |
+| Which LB type (L4/L7) lets you route `/restaurant/*` and `/user/*` to different pools? | |
+| Which algorithm should you use for WebSocket connections? | |
+| What HTTP path does your LB probe for health? | |
+ 
+**Design task — draw the request flow:**
+ 
+```
+User types zomato.com in browser
+         │
+         ▼
+[ DNS Resolver ] ──── looks up ────► ?
+         │
+         ▼
+[ ??? Load Balancer ] ── routes by ──► ?
+         │
+    ┌────┴────┐
+    ▼         ▼
+[Server 1] [Server 2]
+```
+ 
+Fill in the blanks above and explain what type of LB and why.
+ 
+---
+ 
+## 🔗 Related Notes
+ 
+- `SD-Reference-DNS-LoadBalancers.md` — full reference for DNS records + LB algorithms (answer key)
+- `SD-Reference-Scaling-and-LB.md` — Day 9, horizontal scaling + stateless servers
+- `SD-Reference-TCP-vs-UDP.md` — Day 15, transport layer (context for L4 decisions)
+- Day 19 — CDN deep dive (content delivery builds directly on DNS + LB concepts)
+---
+ 
+### Suggested commit
+ 
+```
+docs(day18): add DNS record types and L4 vs L7 load balancing notes
+```
